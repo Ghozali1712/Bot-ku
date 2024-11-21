@@ -1,26 +1,49 @@
 const axios = require('axios');
+const sharp = require('sharp'); // Import sharp untuk manipulasi gambar
 
 // Fungsi untuk memproses kode PLU dalam fitur Monitoring Price Tag
 async function processMonitoringPriceTag(kodePLU, ptz, chatId) {
     try {
         console.log(`Memproses PLU ${kodePLU} untuk fitur Monitoring Price Tag`);
 
-        // URL API untuk mengambil gambar barcode dengan ukuran yang jelas untuk pemindaian
-        const barcodeUrl = `https://barcode.tec-it.com/barcode.ashx?data=${kodePLU}&code=Code128&format=Image&unit=Mm&size=150&dpi=300&rotation=0`;
-        const response = await axios.get(barcodeUrl, { responseType: 'arraybuffer' });
+        // URL API untuk mengambil gambar barcode langsung dengan format PNG
+        const barcodeUrl = `https://barcodeapi.org/api/128/${kodePLU}`;
+
+        // Mengirim permintaan HTTP untuk mendapatkan gambar sebagai arraybuffer
+        const response = await axios.get(barcodeUrl, {
+            responseType: 'arraybuffer',
+            headers: {
+                'Accept': 'image/png', // Pastikan menerima gambar PNG
+            }
+        });
 
         // Memastikan API mengembalikan gambar dengan data yang valid
         if (response.status === 200 && response.data.length > 0) {
+            // Memeriksa apakah ukuran gambar cukup besar
+            if (response.data.length < 100) {
+                throw new Error('Gambar barcode terlalu kecil atau rusak.');
+            }
+
+            // Mengonversi data arraybuffer ke Buffer
             const imageBuffer = Buffer.from(response.data, 'binary');
-            
-            // Mengirimkan gambar yang lebih jelas ke pengguna
+
+            // Manipulasi gambar dengan sharp untuk menambahkan background
+            const imageWithBackground = await sharp(imageBuffer)
+                .resize({ width: 600 }) // Sesuaikan ukuran gambar (opsional)
+                .extend({
+                    top: 50, left: 50, bottom: 50, right: 50, // Menambahkan background di kiri atas dan bawah
+                    background: { r: 255, g: 255, b: 255, alpha: 1 } // Warna putih (R, G, B)
+                })
+                .toBuffer(); // Menghasilkan buffer gambar yang telah dimodifikasi
+
+            // Mengirimkan gambar yang telah dimodifikasi (dengan background) ke pengguna
             await ptz.sendMessage(chatId, {
-                image: imageBuffer,
+                image: imageWithBackground,
                 caption: `PLU: ${kodePLU}`,
-                mimetype: 'image/png'
+                mimetype: 'image/png' // Menggunakan format PNG
             });
 
-            console.log('Gambar barcode yang jelas berhasil dikirim.');
+            console.log('Gambar barcode dengan background berhasil dikirim.');
         } else {
             console.log('Gambar kosong dari API.');
             await ptz.sendMessage(chatId, { text: `Gagal mengambil gambar barcode untuk PLU: ${kodePLU}.` });

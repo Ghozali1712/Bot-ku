@@ -1,8 +1,14 @@
 const axios = require('axios');
 const path = require('path');
 const xlsx = require('xlsx');
+const sharp = require('sharp'); // Pastikan sharp diinstal
 
 async function cariKodeDiExcel(kode, ptz, chatId) {
+    if (!kode) {
+        await ptz.sendMessage(chatId, { text: 'Kode PLU tidak valid.' });
+        return;
+    }
+
     try {
         // Path file Excel
         const filePath = path.join(__dirname, 'Barcode All Modis.xlsx');
@@ -16,8 +22,9 @@ async function cariKodeDiExcel(kode, ptz, chatId) {
             const data = xlsx.utils.sheet_to_json(sheet, { header: 1 }); // Membaca data tanpa header, kolom menggunakan indeks
 
             console.log(`Membaca sheet: ${sheetName}`);
+
             // Periksa apakah sheet memiliki data
-            if (data.length === 0) {
+            if (!data || data.length === 0) {
                 console.log(`Sheet ${sheetName} kosong, lewati.`);
                 continue;
             }
@@ -56,22 +63,46 @@ async function cariKodeDiExcel(kode, ptz, chatId) {
         if (hasilDitemukan.length > 0) {
             for (const hasil of hasilDitemukan) {
                 try {
-                    // Menggunakan barcode untuk membuat URL gambar dengan kualitas lebih tinggi
-                    const barcodeUrl = `https://barcode.tec-it.com/barcode.ashx?data=${hasil.barcode}&code=Code128&format=Image&unit=Mm&size=100&dpi=300&rotation=0`;
+                    // Menggunakan barcode untuk membuat URL gambar tanpa ekstensi .png
+                    const barcodeUrl = `https://barcodeapi.org/api/128/${encodeURIComponent(hasil.barcode)}`;
 
                     console.log(`Mengakses URL: ${barcodeUrl}`);
-                    const response = await axios.get(barcodeUrl, { responseType: 'arraybuffer' });
+                    const response = await axios.get(barcodeUrl, { responseType: 'json' });
 
-                    if (response.status === 200 && response.data.length > 0) {
-                        const imageBuffer = Buffer.from(response.data, 'binary');
-                        await ptz.sendMessage(chatId, {
-                            image: imageBuffer,
-                            caption: `Sheet: ${hasil.sheetName}\nPLU: ${hasil.plu}\nDeskripsi: ${hasil.deskripsi}\nModis: ${hasil.modis}\nShelving: ${hasil.shelving}\nBaris: ${hasil.baris}`,
-                            mimetype: 'image/png'
-                        });
-                        console.log('Gambar berhasil dikirim.');
+                    // Log tipe konten dan jika respons JSON, tampilkan pesan kesalahan
+                    console.log('Tipe konten yang diterima:', response.headers['content-type']);
+
+                    // Cek jika konten yang diterima adalah JSON (bukan gambar)
+                    if (response.headers['content-type'].includes('application/json')) {
+                        const errorResponse = response.data;
+                        console.error('Kesalahan dari API:', errorResponse);
+
+                        // Jika API memberikan base64 gambar dalam JSON, proses base64 tersebut
+                        if (errorResponse.base64) {
+                            const imageBuffer = Buffer.from(errorResponse.base64, 'base64');
+
+                            // Manipulasi gambar dengan sharp untuk menambahkan background
+                            const imageWithBackground = await sharp(imageBuffer)
+                                .resize({ width: 600 }) // Sesuaikan ukuran gambar (opsional)
+                                .extend({
+                                    top: 50, left: 50, bottom: 50, right: 50, // Menambahkan background di kiri atas dan bawah
+                                    background: { r: 255, g: 255, b: 255, alpha: 1 } // Warna putih (R, G, B)
+                                })
+                                .toBuffer(); // Menghasilkan buffer gambar yang telah dimodifikasi
+
+                            // Mengirimkan gambar ke pengguna
+                            await ptz.sendMessage(chatId, {
+                                image: imageWithBackground,
+                                caption: `Sheet: ${hasil.sheetName}\nPLU: ${hasil.plu}\nDeskripsi: ${hasil.deskripsi}\nModis: ${hasil.modis}\nShelving: ${hasil.shelving}\nBaris: ${hasil.baris}`,
+                                mimetype: 'image/png'
+                            });
+                            console.log('Gambar berhasil dikirim.');
+                        } else {
+                            // Jika tidak ada base64, kirimkan kesalahan
+                            await ptz.sendMessage(chatId, { text: `Gagal mengambil gambar barcode untuk PLU: ${hasil.plu} di sheet ${hasil.sheetName}.` });
+                        }
                     } else {
-                        console.log('Gambar kosong dari API.');
+                        console.log('Tipe konten bukan JSON, gambar tidak diterima.');
                         await ptz.sendMessage(chatId, { text: `Gagal mengambil gambar barcode untuk PLU: ${hasil.plu} di sheet ${hasil.sheetName}.` });
                     }
                 } catch (apiError) {
