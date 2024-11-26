@@ -1,10 +1,12 @@
-const { processMonitoringPriceTag } = require('./pluProcessor');  // Pastikan fungsi diimpor
+const { cariKodeDiExcel: cariKodeDiExcelV1 } = require('./barcodev1'); // Barcode v1
+const { cariKodeDiExcel: cariKodeDiExcelV2 } = require('./barcodev2'); // Barcode v2
+const { processMonitoringPriceTag } = require('./pluProcessor'); // Monitoring Price Tag
 
-const { cariKodeDiExcel } = require('./excel');
-const messageProcessing = new Set(); // Gunakan Set untuk memastikan hanya satu permintaan diproses sekaligus
+// Gunakan Set untuk memastikan hanya satu permintaan diproses sekaligus
+const messageProcessing = new Set(); 
 
 // Variabel untuk menyimpan pilihan fitur berdasarkan chatId
-const fiturDipilih = {}; // Format: { chatId: "pjr" }
+const fiturDipilih = {}; // Format: { chatId: "barcode_v1" }
 
 // Fungsi untuk memproses pesan masuk
 async function processMessage(mek, ptz) {
@@ -14,7 +16,7 @@ async function processMessage(mek, ptz) {
     // Cek apakah pesan sudah diproses untuk chat ini
     if (messageProcessing.has(chatId)) {
         console.log(`Pesan dari ${chatId} sedang diproses, abaikan permintaan.`);
-        return; // Abaikan jika sudah diproses
+        return;
     }
 
     // Tandai bahwa pesan sedang diproses
@@ -22,31 +24,40 @@ async function processMessage(mek, ptz) {
     messageProcessing.add(chatId);
 
     try {
-        // Cek apakah pesan adalah perintah untuk kembali ke menu utama (start)
+        // Cek apakah pesan adalah perintah untuk kembali ke menu utama
         if (message.toLowerCase() === "start") {
-            // Menampilkan kembali submenu meskipun sudah memilih fitur sebelumnya
             await ptz.sendMessage(chatId, {
-                text: `Silakan pilih fitur yang ingin digunakan:\n1. PLU ke Barcode (pjr)\n2. Ubah PLU jadi Gambar (Monitoring Price Tag)\nKirim angka 1 atau 2 untuk memilih.`
+                text: `Silakan pilih fitur yang ingin digunakan:\n` +
+                      `1. Barcode v1\n2. Barcode v2\n3. Monitoring Price Tag\n` +
+                      `Kirim angka 1, 2, atau 3 untuk memilih.`
             });
-            // Menghapus pilihan fitur sebelumnya agar pengguna bisa memilih ulang
-            delete fiturDipilih[chatId];
+            delete fiturDipilih[chatId]; // Hapus pilihan fitur sebelumnya
             return;
         }
 
         // Cek apakah pesan adalah perintah untuk memilih fitur
-        if (message === "1" || message === "2") {
-            const pilihan = message === "1" ? "pjr" : "monitoring";
+        if (["1", "2", "3"].includes(message)) {
+            const pilihan = 
+                message === "1" ? "barcode_v1" : 
+                message === "2" ? "barcode_v2" : 
+                "monitoring";
+            
             fiturDipilih[chatId] = pilihan;
             await ptz.sendMessage(chatId, {
-                text: `Fitur berhasil diatur: ${pilihan === "pjr" ? "PLU ke Barcode" : "Ubah PLU jadi Gambar (Monitoring Price Tag)"}.\nSilakan kirim daftar kode PLU untuk diproses.`
+                text: `Fitur berhasil diatur: ${pilihan === "barcode_v1" ? "Barcode v1" : 
+                                                pilihan === "barcode_v2" ? "Barcode v2" : 
+                                                "Monitoring Price Tag"}.\n` +
+                      `Silakan kirim daftar kode PLU untuk diproses.`
             });
             return;
         }
 
-        // Jika belum memilih fitur, arahkan pengguna untuk memilih fitur terlebih dahulu
+        // Jika belum memilih fitur, arahkan pengguna untuk memilih terlebih dahulu
         if (!fiturDipilih[chatId]) {
             await ptz.sendMessage(chatId, {
-                text: `Silakan pilih fitur yang ingin digunakan:\n1. PLU ke Barcode (pjr)\n2. Ubah PLU jadi Gambar (Monitoring Price Tag)\nKirim angka 1 atau 2 untuk memilih.`
+                text: `Silakan pilih fitur yang ingin digunakan:\n` +
+                      `1. Barcode v1\n2. Barcode v2\n3. Monitoring Price Tag\n` +
+                      `Kirim angka 1, 2, atau 3 untuk memilih.`
             });
             return;
         }
@@ -58,7 +69,9 @@ async function processMessage(mek, ptz) {
 
         if (kodePLUs.length === 0) {
             console.log(`Tidak ada kode PLU valid untuk chatId: ${chatId}`);
-            await ptz.sendMessage(chatId, { text: "Tidak ada kode PLU valid yang ditemukan. Mohon kirim kode PLU dengan format angka yang benar." });
+            await ptz.sendMessage(chatId, {
+                text: "Tidak ada kode PLU valid yang ditemukan. Mohon kirim kode PLU dengan format angka yang benar."
+            });
             return;
         }
 
@@ -71,13 +84,14 @@ async function processMessage(mek, ptz) {
 
                 // Pilih tindakan berdasarkan fitur
                 if (fiturDipilih[chatId] === "monitoring") {
-                    await processMonitoringPriceTag(kode, ptz, chatId);  // Memanggil fungsi Monitoring Price Tag
-                } else if (fiturDipilih[chatId] === "pjr") {
-                    await cariKodeDiExcel(kode, ptz, chatId); // Proses PLU ke Barcode
+                    await processMonitoringPriceTag(kode, ptz, chatId);
+                } else if (fiturDipilih[chatId] === "barcode_v1") {
+                    await cariKodeDiExcelV1(kode, ptz, chatId); // Barcode v1
+                } else if (fiturDipilih[chatId] === "barcode_v2") {
+                    await cariKodeDiExcelV2(kode, ptz, chatId); // Barcode v2
                 }
             } catch (err) {
                 console.error(`Kesalahan saat memproses PLU ${kode}: ${err.message}`);
-                // Kirim pesan kesalahan hanya untuk kode yang gagal
                 await ptz.sendMessage(chatId, { text: `PLU ${kode}: Gagal diproses.` });
             }
         }
@@ -85,10 +99,9 @@ async function processMessage(mek, ptz) {
         console.error('Error di processMessage:', error);
         await ptz.sendMessage(chatId, { text: "Terjadi kesalahan dalam memproses permintaan Anda." });
     } finally {
-        // Hapus status sedang diproses setelah selesai
         console.log(`Selesai memproses pesan untuk chatId: ${chatId}`);
-        messageProcessing.delete(chatId);
+        messageProcessing.delete(chatId); // Hapus status sedang diproses
     }
 }
 
-module.exports = { processMessage };  // Menyediakan fungsi untuk digunakan oleh file lain
+module.exports = { processMessage };
