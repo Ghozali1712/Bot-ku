@@ -9,7 +9,9 @@
     "@adiwajshing/baileys": "^5.0.0",
     "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "^6.7.9",
+    "awesome-phonenumber": "^7.2.0",
     "axios": "^1.7.7",
+    "bwip-js": "^4.5.1",
     "chalk": "^4.1.2",
     "fs": "0.0.1-security",
     "fs-extra": "^11.2.0",
@@ -20,6 +22,7 @@
     "sharp": "^0.33.5",
     "svg2img": "^1.0.0-beta.2",
     "tmp": "^0.2.3",
+    "winston": "^3.17.0",
     "xlsx": "^0.18.5"
   }
 }

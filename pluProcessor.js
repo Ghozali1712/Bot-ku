@@ -1,67 +1,63 @@
-const axios = require('axios');
-const sharp = require('sharp'); // Import sharp untuk manipulasi gambar
+const bwipjs = require('bwip-js');
 
-// Fungsi untuk memproses kode PLU dalam fitur Monitoring Price Tag
+/**
+ * Fungsi untuk memproses kode PLU dan mengonversinya menjadi gambar
+ * @param {string} kodePLU - Kode PLU yang akan diproses
+ * @param {object} ptz - Objek WhatsApp (Baileys)
+ * @param {string} chatId - ID chat pengguna
+ */
 async function processMonitoringPriceTag(kodePLU, ptz, chatId) {
     try {
         console.log(`Memproses PLU ${kodePLU} untuk fitur Monitoring Price Tag`);
 
-        // URL API untuk mengambil gambar barcode langsung dengan format PNG
-        const barcodeUrl = `https://barcodeapi.org/api/128/${kodePLU}`;
-
-        // Mengirim permintaan HTTP untuk mendapatkan gambar sebagai arraybuffer
-        const response = await axios.get(barcodeUrl, {
-            responseType: 'arraybuffer',
-            headers: {
-                'Accept': 'image/png', // Pastikan menerima gambar PNG
-            }
+        // Hasilkan gambar barcode dari PLU menggunakan bwip-js
+        const barcodeBuffer = await bwipjs.toBuffer({
+            bcid: 'code128',           // Jenis barcode
+            text: kodePLU,             // Data barcode (PLU)
+            scale: 15,                 // Meningkatkan skala untuk membuat barcode lebih lebar
+            height: 15,                // Menurunkan tinggi barcode
+            includetext: true,         // Teks ditambahkan di bawah barcode
+            textxalign: 'center',      // Teks di tengah
+            textsize: 18,              // Ukuran teks lebih besar
+            textmargin: 10,            // Jarak teks dengan barcode
+            paddingwidth: 20,          // Memperlebar sisi kanan dan kiri
+            paddingheight: 10,         // Memperlebar sisi atas dan bawah
+            backgroundcolor: 'FFFFFF', // Latar belakang putih
+            foregroundcolor: '000000', // Garis hitam
         });
 
-        // Memastikan API mengembalikan gambar dengan data yang valid
-        if (response.status === 200 && response.data.length > 0) {
-            // Memeriksa apakah ukuran gambar cukup besar
-            if (response.data.length < 100) {
-                throw new Error('Gambar barcode terlalu kecil atau rusak.');
-            }
+        // Kirim gambar barcode ke WhatsApp
+        await ptz.sendMessage(chatId, {
+            image: barcodeBuffer,
+            caption: `PLU: ${kodePLU}`,
+            mimetype: 'image/png', // Format PNG
+        });
 
-            // Mengonversi data arraybuffer ke Buffer
-            const imageBuffer = Buffer.from(response.data, 'binary');
-
-            // Manipulasi gambar dengan sharp untuk menambahkan background
-            const imageWithBackground = await sharp(imageBuffer)
-                .resize({ width: 600 }) // Sesuaikan ukuran gambar (opsional)
-                .extend({
-                    top: 50, left: 50, bottom: 50, right: 50, // Menambahkan background di kiri atas dan bawah
-                    background: { r: 255, g: 255, b: 255, alpha: 1 } // Warna putih (R, G, B)
-                })
-                .toBuffer(); // Menghasilkan buffer gambar yang telah dimodifikasi
-
-            // Mengirimkan gambar yang telah dimodifikasi (dengan background) ke pengguna
-            await ptz.sendMessage(chatId, {
-                image: imageWithBackground,
-                caption: `PLU: ${kodePLU}`,
-                mimetype: 'image/png' // Menggunakan format PNG
-            });
-
-            console.log('Gambar barcode dengan background berhasil dikirim.');
-        } else {
-            console.log('Gambar kosong dari API.');
-            await ptz.sendMessage(chatId, { text: `Gagal mengambil gambar barcode untuk PLU: ${kodePLU}.` });
-        }
+        console.log(`Gambar barcode untuk PLU ${kodePLU} berhasil dikirim.`);
     } catch (error) {
         console.error('Kesalahan saat memproses PLU:', error.message);
         await ptz.sendMessage(chatId, { text: `Terjadi kesalahan dalam memproses PLU: ${kodePLU}.` });
     }
 }
 
-// Fungsi untuk memproses pesan masuk dan menangani beberapa PLU
+/**
+ * Fungsi untuk memproses pesan masuk dan menangani beberapa PLU
+ * @param {object} mek - Pesan yang diterima
+ * @param {object} ptz - Objek WhatsApp (Baileys)
+ */
 async function processMessage(mek, ptz) {
     const chatId = mek.key.remoteJid;
-    const message = mek.message.conversation?.trim();
+    const message = mek.message?.conversation?.trim();
 
-    // Pisahkan kode PLU berdasarkan koma atau baris baru
+    if (!message) {
+        console.log(`Pesan kosong atau tidak valid untuk chatId: ${chatId}`);
+        await ptz.sendMessage(chatId, { text: "Pesan tidak valid atau kosong." });
+        return;
+    }
+
+    // Pisahkan kode PLU berdasarkan koma, spasi, atau baris baru
     const kodePLUs = message
-        .split(/[\s,;\n]+/) // Pisahkan berdasarkan spasi, koma, titik koma, atau baris baru
+        .split(/[\s,;\n]+/)        // Pisahkan berdasarkan spasi, koma, titik koma, atau baris baru
         .filter(kode => /^\d+$/.test(kode)); // Hanya ambil kode PLU yang valid (angka)
 
     if (kodePLUs.length === 0) {
@@ -76,7 +72,7 @@ async function processMessage(mek, ptz) {
     for (const kode of kodePLUs) {
         try {
             console.log(`Mencari kode PLU ${kode} untuk chatId: ${chatId}`);
-            // Panggil fungsi untuk memproses PLU dengan fitur Monitoring Price Tag
+            // Panggil fungsi untuk memproses PLU
             await processMonitoringPriceTag(kode, ptz, chatId);
         } catch (err) {
             console.error(`Kesalahan saat memproses PLU ${kode}: ${err.message}`);
