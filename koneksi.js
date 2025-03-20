@@ -19,7 +19,7 @@ const question = (text) => {
 const logSuccess = (message) => console.log(chalk.green(`[🟢 SUCCESS] ${message}`));
 const logInfo = (message) => console.log(chalk.blue(`[🔵 INFO] ${message}`));
 const logProcessing = (message) => console.log(chalk.yellow(`[🔧 PROCESSING] ${message}`));
-const logReconnecting = (message) => console.log(chalk.orange(`[🟠 RECONNECTING] ${message}`));
+const logReconnecting = (message) => console.log(chalk.hex('#FFA500')(`[🟠 RECONNECTING] ${message}`));
 const logWarning = (message) => console.log(chalk.yellow(`[🟡 WARNING] ${message}`));
 const logError = (message) => console.error(chalk.red(`[🔴 ERROR] ${message}`));
 

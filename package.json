@@ -1,28 +1,25 @@
 {
-  "name": "whatsapp-bot",
+  "name": "bot-ku",
   "version": "1.0.0",
-  "main": "index.js",
+  "description": "WhatsApp Bot with barcode functionality",
+  "main": "koneksi.js",
   "scripts": {
-    "start": "node koneksi.js"
+    "start": "node koneksi.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "author": "",
+  "license": "ISC",
   "dependencies": {
-    "@adiwajshing/baileys": "^5.0.0",
     "@hapi/boom": "^10.0.1",
-    "@whiskeysockets/baileys": "^6.7.9",
-    "awesome-phonenumber": "^7.2.0",
-    "axios": "^1.7.7",
-    "bwip-js": "^4.5.1",
+    "@whiskeysockets/baileys": "^6.4.0",
+    "awesome-phonenumber": "^5.11.0",
+    "axios": "^0.27.2",
+    "bwip-js": "^3.4.3",
     "chalk": "^4.1.2",
-    "fs": "0.0.1-security",
-    "fs-extra": "^11.2.0",
-    "log-symbols": "^7.0.0",
-    "node-fetch": "^2.7.0",
-    "pdf-parse": "^1.1.1",
-    "pino": "^9.5.0",
-    "sharp": "^0.33.5",
-    "svg2img": "^1.0.0-beta.2",
-    "tmp": "^0.2.3",
-    "winston": "^3.17.0",
-    "xlsx": "^0.18.5"
+    "fs-extra": "^10.1.0",
+    "jimp": "^0.16.1",
+    "pdfkit": "^0.16.0",
+    "pino": "^8.15.0",
+    "qrcode-terminal": "^0.12.0"
   }
 }

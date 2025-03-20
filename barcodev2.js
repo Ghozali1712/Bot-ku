@@ -1,11 +1,19 @@
 const fs = require('fs');
 const path = require('path');
 const { Worker } = require('worker_threads');
-const bwipjs = require('bwip-js');
 const barcodeCache = new Map();
 
+// Definisikan path untuk file dan direktori
+const BARCODE_FILE = './barcode.json';
+const CACHE_DIR = './cache';
+
+// Memastikan direktori cache ada
+if (!fs.existsSync(CACHE_DIR)) {
+    fs.mkdirSync(CACHE_DIR);
+}
+
 // Memuat data barcode dari file JSON
-const barcodeData = JSON.parse(fs.readFileSync('./barcode.json', 'utf-8')).barcodesheet;
+const barcodeData = JSON.parse(fs.readFileSync(BARCODE_FILE, 'utf-8')).barcodesheet;
 
 /**
  * Fungsi untuk membuat barcode menggunakan worker thread
@@ -34,58 +42,69 @@ function createBarcodeWithWorker(barcodeData) {
  * @param {object} ptz - Objek WhatsApp (Baileys)
  * @param {string} chatId - ID chat pengguna
  */
-async function cariKodeDiExcelV2(kode, ptz, chatId) {
+async function cariKodeDiExcelV2(plu, ptz, chatId, isPdfMode = false) {
     try {
-        console.log(`Memulai pencarian untuk PLU: ${kode}`);
-        const kodeStr = kode.toString();
+        console.log(`Memulai pencarian untuk PLU: ${plu}`);
+        
+        // Cari PLU yang sesuai
+        const hasil = barcodeData.filter(item => item.plu.toString() === plu.toString());
+        console.log('Hasil pencarian:', hasil);
 
-        // Mencari barcode berdasarkan PLU atau kata kunci
-        const hasil = barcodeData.filter(item =>
-            item.plu.toString() === kodeStr || item.barcode.toLowerCase().includes(kodeStr.toLowerCase())
-        );
-
-        console.log(`Hasil pencarian: ${JSON.stringify(hasil)}`);
-
-        if (hasil.length > 0) {
-            for (const item of hasil) {
-                try {
-                    // Cek cache untuk barcode
-                    if (barcodeCache.has(item.barcode)) {
-                        console.log(`Barcode untuk ${item.barcode} sudah ada di cache.`);
-                    } else {
-                        // Menggunakan worker thread untuk mempercepat pembuatan barcode
-                        const barcodeBuffer = await createBarcodeWithWorker(item.barcode);
-                        barcodeCache.set(item.barcode, barcodeBuffer); // Simpan ke cache
-
-                        console.log(`Barcode untuk ${item.barcode} berhasil dibuat dan disimpan ke cache.`);
-                    }
-
-                    const barcodeBuffer = barcodeCache.get(item.barcode);
-
-                    // Simpan buffer ke file sementara
-                    const filePath = path.join(__dirname, 'barcode.png');
-                    fs.writeFileSync(filePath, barcodeBuffer);
-
-                    // Kirim gambar sebagai file
-                    await ptz.sendMessage(chatId, {
-                        image: { url: filePath },
-                        caption: `🔍 Hasil Pencarian:\n🎯 *PLU:* ${item.plu}\n📦 *Barcode:* ${item.barcode}`,
-                    });
-
-                    // Hapus file sementara
-                    fs.unlinkSync(filePath);
-                    console.log(`Gambar barcode untuk PLU ${item.plu} berhasil dikirim sebagai file.`);
-                } catch (workerError) {
-                    console.error('Gagal mengirim gambar barcode:', workerError);
-                    await ptz.sendMessage(chatId, { text: 'Terjadi kesalahan dalam pembuatan barcode.' });
-                }
+        if (hasil.length === 0) {
+            if (!isPdfMode) {
+                await ptz.sendMessage(chatId, { text: `❌ Tidak ditemukan barcode untuk PLU: ${plu}` });
             }
-        } else {
-            await ptz.sendMessage(chatId, { text: `PLU atau barcode dengan kata kunci "${kode}" tidak ditemukan.` });
+            return { success: false, message: `Tidak ditemukan barcode untuk PLU: ${plu}` };
         }
+
+        const barcode = hasil[0].barcode;
+        
+        // Cek apakah barcode sudah ada di cache
+        const cachePath = path.join(CACHE_DIR, `${barcode}.png`);
+        let imageBuffer;
+
+        if (fs.existsSync(cachePath)) {
+            console.log(`Barcode untuk ${barcode} sudah ada di cache.`);
+            imageBuffer = fs.readFileSync(cachePath);
+        } else {
+            // Generate barcode baru menggunakan worker
+            try {
+                imageBuffer = await createBarcodeWithWorker(barcode);
+                // Simpan ke cache
+                fs.writeFileSync(cachePath, imageBuffer);
+                console.log(`Barcode untuk ${barcode} berhasil dibuat dengan worker dan disimpan ke cache.`);
+            } catch (workerError) {
+                console.error('Error saat membuat barcode dengan worker:', workerError);
+                throw new Error(`Gagal membuat barcode: ${workerError.message}`);
+            }
+        }
+
+        if (isPdfMode) {
+            return { success: true, buffer: imageBuffer };
+        }
+
+        // Kirim gambar sebagai file dengan buffer yang valid
+        const tempFilePath = path.join(CACHE_DIR, `temp_${barcode}.png`);
+        fs.writeFileSync(tempFilePath, imageBuffer);
+
+        await ptz.sendMessage(chatId, {
+            image: { url: tempFilePath },
+            caption: `🏷️ *Barcode untuk PLU ${plu}*\n📊 Kode: ${barcode}`,
+            mimetype: 'image/png'
+        });
+
+        // Hapus file temporary
+        fs.unlinkSync(tempFilePath);
+        
+        console.log(`Gambar barcode untuk PLU ${plu} berhasil dikirim sebagai file.`);
+        return { success: true, message: 'Barcode berhasil dikirim' };
+
     } catch (error) {
-        console.error(`Kesalahan saat mencari barcode untuk "${kode}":`, error);
-        await ptz.sendMessage(chatId, { text: `Terjadi kesalahan saat mencari barcode untuk "${kode}".` });
+        console.error('Error dalam cariKodeDiExcelV2:', error);
+        if (!isPdfMode) {
+            await ptz.sendMessage(chatId, { text: `❌ Terjadi kesalahan saat memproses PLU: ${plu}` });
+        }
+        return { success: false, message: error.message };
     }
 }
 
