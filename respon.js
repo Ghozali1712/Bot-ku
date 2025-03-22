@@ -28,7 +28,8 @@ const FITUR_MAPPING = {
     "3": { fitur: "monitoring", pesan: "✅ Fitur *Monitoring Price Tag* berhasil diatur.\n📌 Kirim kode PLU yang ingin diubah jadi gambar." },
     "4": { fitur: "restart", pesan: "" },
     "5": { fitur: "tambah_rak", pesan: "✅ Fitur *Tambah Rak* berhasil diatur.\n📌 Silakan masukkan nama rak:" },
-    "6": { fitur: "pilih_rak", pesan: "✅ Fitur *Pilih Rak* berhasil diatur.\n📌 Berikut adalah daftar rak Anda:" }
+    "6": { fitur: "pilih_rak", pesan: "✅ Fitur *Pilih Rak* berhasil diatur.\n📌 Berikut adalah daftar rak Anda:" },
+    "7": { fitur: "scan_banyak", pesan: "✅ Fitur *Scan Banyak* berhasil diatur.\n📌 Silakan kirim data sesuai format:\nPLU,QTY" }
 };
 
 // Daftar emoji reaksi dengan animasi
@@ -87,7 +88,8 @@ async function sendMessageWithButtons(ptz, chatId, message, isAdminUser = false)
                 { buttonId: 'id3', buttonText: { displayText: '3️⃣ Monitoring Price Tag' }, type: 1 },
                 { buttonId: 'id4', buttonText: { displayText: '4️⃣ Restart Bot' }, type: 1 },
                 { buttonId: 'id5', buttonText: { displayText: '5️⃣ Tambah Rak' }, type: 1 },
-                { buttonId: 'id6', buttonText: { displayText: '6️⃣ Pilih Rak' }, type: 1 }
+                { buttonId: 'id6', buttonText: { displayText: '6️⃣ Pilih Rak' }, type: 1 },
+                { buttonId: 'id7', buttonText: { displayText: '7️⃣ Scan Banyak' }, type: 1 }
             );
 
             const buttonMessage = {
@@ -103,7 +105,9 @@ async function sendMessageWithButtons(ptz, chatId, message, isAdminUser = false)
                       `5️⃣ *Tambah Rak*\n` +
                       `   _Menambahkan rak baru_\n\n` +
                       `6️⃣ *Pilih Rak*\n` +
-                      `   _Memilih rak yang tersedia_`,
+                      `   _Memilih rak yang tersedia_\n\n` +
+                      `7️⃣ *Scan Banyak*\n` +
+                      `   _Membuat barcode untuk scan banyak_`,
                 footer: '© Bot-ku 2024',
                 buttons: buttons,
                 headerType: 1
@@ -116,7 +120,8 @@ async function sendMessageWithButtons(ptz, chatId, message, isAdminUser = false)
                 { buttonId: 'id2', buttonText: { displayText: '1️⃣ PJR' }, type: 1 },
                 { buttonId: 'id3', buttonText: { displayText: '2️⃣ Monitoring Price Tag' }, type: 1 },
                 { buttonId: 'id5', buttonText: { displayText: '3️⃣ Tambah Rak' }, type: 1 },
-                { buttonId: 'id6', buttonText: { displayText: '4️⃣ Pilih Rak' }, type: 1 }
+                { buttonId: 'id6', buttonText: { displayText: '4️⃣ Pilih Rak' }, type: 1 },
+                { buttonId: 'id7', buttonText: { displayText: '5️⃣ Scan Banyak' }, type: 1 }
             );
 
             const buttonMessage = {
@@ -128,7 +133,9 @@ async function sendMessageWithButtons(ptz, chatId, message, isAdminUser = false)
                       `3️⃣ *Tambah Rak*\n` +
                       `   _Menambahkan rak baru_\n\n` +
                       `4️⃣ *Pilih Rak*\n` +
-                      `   _Memilih rak yang tersedia_`,
+                      `   _Memilih rak yang tersedia_\n\n` +
+                      `5️⃣ *Scan Banyak*\n` +
+                      `   _Membuat barcode untuk scan banyak_`,
                 footer: '© Bot-ku 2024',
                 buttons: buttons,
                 headerType: 1
@@ -140,8 +147,8 @@ async function sendMessageWithButtons(ptz, chatId, message, isAdminUser = false)
         console.error('❌ Gagal mengirim pesan menu:', error);
         // Fallback ke menu teks jika tombol gagal
         const fallbackText = isAdminUser ? 
-            message + "\n\n1️⃣ Ketik 1 untuk Tambah Data\n2️⃣ Ketik 2 untuk PJR\n3️⃣ Ketik 3 untuk Monitoring Price Tag\n4️⃣ Ketik 4 untuk Restart Bot\n5️⃣ Ketik 5 untuk Tambah Rak\n6️⃣ Ketik 6 untuk Pilih Rak" :
-            message + "\n\n1️⃣ Ketik 1 untuk PJR\n2️⃣ Ketik 2 untuk Monitoring Price Tag\n3️⃣ Ketik 3 untuk Tambah Rak\n4️⃣ Ketik 4 untuk Pilih Rak";
+            message + "\n\n1️⃣ Ketik 1 untuk Tambah Data\n2️⃣ Ketik 2 untuk PJR\n3️⃣ Ketik 3 untuk Monitoring Price Tag\n4️⃣ Ketik 4 untuk Restart Bot\n5️⃣ Ketik 5 untuk Tambah Rak\n6️⃣ Ketik 6 untuk Pilih Rak\n7️⃣ Ketik 7 untuk Scan Banyak" :
+            message + "\n\n1️⃣ Ketik 1 untuk PJR\n2️⃣ Ketik 2 untuk Monitoring Price Tag\n3️⃣ Ketik 3 untuk Tambah Rak\n4️⃣ Ketik 4 untuk Pilih Rak\n5️⃣ Ketik 5 untuk Scan Banyak";
         await sendMessage(ptz, chatId, fallbackText);
     }
 }
@@ -342,6 +349,68 @@ async function handlePilihRak(chatId, message, ptz) {
     }
 }
 
+// Fungsi untuk menangani scan banyak
+async function handleScanBanyak(chatId, message, ptz) {
+    // Format yang diharapkan: PLU,QTY
+    const parts = message.split(',');
+    if (parts.length !== 2) {
+        return await sendMessage(ptz, chatId, "⚠️ Format tidak valid. Gunakan format: PLU,QTY\nContoh: 12345,5");
+    }
+
+    const [plu, qty] = parts;
+    
+    // Validasi input
+    if (!/^\d+$/.test(plu) || !/^\d+$/.test(qty)) {
+        return await sendMessage(ptz, chatId, "⚠️ Format tidak valid. PLU dan QTY harus berupa angka");
+    }
+
+    try {
+        // Buat barcode dengan format B/PLU/00/QTY
+        const barcodeData = `B${plu}00${qty}`;
+        
+        // Kirim ke worker thread dengan type 'bulk'
+        const { Worker } = require('worker_threads');
+        const worker = new Worker('./worker.js');
+        
+        worker.postMessage({ data: barcodeData, type: 'bulk' });
+        
+        worker.on('message', async (result) => {
+            if (result.success) {
+                // Simpan buffer ke file sementara
+                const fs = require('fs');
+                const path = require('path');
+                const tempPath = path.join(__dirname, 'temp_barcode.png');
+                
+                try {
+                    fs.writeFileSync(tempPath, result.buffer);
+                    
+                    // Kirim gambar dari file
+                    await ptz.sendMessage(chatId, {
+                        image: fs.readFileSync(tempPath),
+                        caption: `✅ Barcode untuk PLU: ${plu} dengan QTY: ${qty}`
+                    });
+                    
+                    // Hapus file sementara
+                    fs.unlinkSync(tempPath);
+                } catch (error) {
+                    console.error('Error handling image:', error);
+                    await sendMessage(ptz, chatId, `❌ Gagal mengirim gambar: ${error.message}`);
+                }
+            } else {
+                await sendMessage(ptz, chatId, `❌ Gagal membuat barcode: ${result.error}`);
+            }
+            worker.terminate();
+        });
+        
+        worker.on('error', async (error) => {
+            await sendMessage(ptz, chatId, `❌ Terjadi kesalahan: ${error.message}`);
+            worker.terminate();
+        });
+    } catch (error) {
+        await sendMessage(ptz, chatId, `❌ Terjadi kesalahan: ${error.message}`);
+    }
+}
+
 // Fungsi memproses pesan masuk
 async function processMessage(mek, ptz) {
     const chatId = mek.key.remoteJid;
@@ -392,7 +461,8 @@ async function processMessage(mek, ptz) {
                 "1": FITUR_MAPPING["2"], // PJR
                 "2": FITUR_MAPPING["3"], // Monitoring
                 "3": FITUR_MAPPING["5"], // Tambah Rak
-                "4": FITUR_MAPPING["6"]  // Pilih Rak
+                "4": FITUR_MAPPING["6"],  // Pilih Rak
+                "5": FITUR_MAPPING["7"]   // Scan Banyak
             };
             selectedFeature = Object.entries(userMapping).find(([key, value]) => 
                 message === key || message === value.fitur || message === `id${key}`
@@ -443,6 +513,8 @@ async function processMessage(mek, ptz) {
                     return await handleTambahRak(chatId, message, ptz);
                 case "pilih_rak":
                     return await handlePilihRak(chatId, message, ptz);
+                case "scan_banyak":
+                    return await handleScanBanyak(chatId, message, ptz);
                 default:
                     userState[chatId] = { status: "menu", isAdmin: isAdminUser };
                     return await sendMessageWithButtons(ptz, chatId, "⚠️ Fitur tidak dikenali.\n\n" + MENU_TEXT, isAdminUser);

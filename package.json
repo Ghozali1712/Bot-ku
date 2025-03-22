@@ -11,7 +11,7 @@
   "license": "ISC",
   "dependencies": {
     "@hapi/boom": "^10.0.1",
-    "@whiskeysockets/baileys": "^6.4.0",
+    "@whiskeysockets/baileys": "^6.5.0",
     "awesome-phonenumber": "^5.11.0",
     "axios": "^0.27.2",
     "bwip-js": "^3.4.3",
@@ -20,6 +20,7 @@
     "jimp": "^0.16.1",
     "pdfkit": "^0.16.0",
     "pino": "^8.15.0",
+    "pino-std-serializers": "^7.0.0",
     "qrcode-terminal": "^0.12.0"
   }
 }
