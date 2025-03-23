@@ -32,6 +32,7 @@ function createBarcodeWithWorker(barcodeData) {
 
         worker.on('error', (error) => reject(error));
 
+        // Send the barcode data directly
         worker.postMessage(barcodeData);
     });
 }

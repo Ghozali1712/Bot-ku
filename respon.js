@@ -2,7 +2,9 @@ const { tambahData } = require('./barcodev1');
 const { cariKodeDiExcelV2: pjr } = require('./barcodev2');
 const { processMonitoringPriceTag } = require('./pluProcessor');
 const { restartBot } = require('./restartBot');
-const { tambahRak, tambahPLUkeRak, getRacks, pilihRak, hapusRak, prosesFormatPengiriman, prosesKirimPDF } = require('./rackManager');
+const { tambahRak, tambahPLUkeRak, getRacks, pilihRak, hapusRak, prosesFormatPengiriman, prosesKirimPDF, sendAdminNotification } = require('./rackManager');
+const { generateBarcodePDF } = require('./pdfGenerator');
+const { sendMessage } = require('./messageUtils');
 const { proto } = require('@whiskeysockets/baileys');
 const fs = require('fs');
 const path = require('path');
@@ -20,7 +22,7 @@ function isAdmin(userId) {
 const MENU_TEXT = `📝 *MENU BOT*\n\nSilakan pilih fitur yang ingin digunakan:`;
 
 // Base64 encoded small menu icon
-const MENU_ICON = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX1BST0ZJTEUAAQEAAAHIAAAAAAQwAABtbnRyUkdCIFhZWiAH4AABAAEAAAAAAABhY3NwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAA9tYAAQAAAADTLQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAlkZXNjAAAA8AAAACRyWFlaAAABFAAAABRnWFlaAAABKAAAABRiWFlaAAABPAAAABR3dHB0AAABUAAAABRyVFJDAAABZAAAAChnVFJDAAABZAAAAChiVFJDAAABZAAAAChjcHJ0AAABjAAAADxtbHVjAAAAAAAAAAEAAAAMZW5VUwAAAAgAAAAcAHMAUgBHAEJYWVogAAAAAAAAb6IAADj1AAADkFhZWiAAAAAAAABimQAAt4UAABjaWFlaIAAAAAAAACSgAAAPhAAAts9YWVogAAAAAAAA9tYAAQAAAADTLXBhcmEAAAAAAAQAAAACZmYAAPKnAAANWQAAE9AAAApbAAAAAAAAAABtbHVjAAAAAAAAAAEAAAAMZW5VUwAAACAAAAAcAEcAbwBvAGcAbABlACAASQBuAGMALgAgADIAMAAxADb/2wBDABQODxIPDRQSEBIXFRQdHx4eHRoaHSQtJSAyVC08MTY3LjIyOkFTRjo6QjoyPkNOREZGS1NMTVlWVV5LWXGEX2n/2wBDARUXFx4aHR4eHUFBQWlra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2v/wAARCAAIAAgDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k=';
+const MENU_ICON = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX1BST0ZJTEUAAQEAAAHIAAAAAAQwAABtbnRyUkdCIFhZWiAH4AABAAEAAAAAAABhY3NwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAA9tYAAQAAAADTLQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAlkZXNjAAAA8AAAACRyWFlaAAABFAAAABRnWFlaAAABKAAAABRiWFlaAAABPAAAABR3dHB0AAABUAAAABRyVFJDAAABZAAAAChnVFJDAAABZAAAAChiVFJDAAABZAAAAChjcHJ0AAABjAAAADxtbHVjAAAAAAAAAAEAAAAMZW5VUwAAAAgAAAAcAHMAUgBHAEJYWVogAAAAAAAAb6IAADj1AAADkFhZWiAAAAAAAABimQAAt4UAABjaWFlaIAAAAAAAACSgAAAPhAAAts9YWVogAAAAAAAA9tYAAQAAAADTLXBhcmEAAAAAAAQAAAACZmYAAPKnAAANWQAAE9AAAApbAAAAAAAAAABtbHVjAAAAAAAAAAEAAAAMZW5VUwAAACAAAAAcAEcAbwBvAGcAbABlACAASQBuAGMALgAgADIAMAAxADb/2wBDABQODxIPDRQSEBIXFRQdHx4eHRoaHSQtJSAyVC08MTY3LjIyOkFTRjo6QjoyPkNOREZGS1NMTVlWVV5LWXGEX2n/2wBDARUXFx4aHR4eHUFBQWlra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2v/wAARCAAIAAgDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k=';
 
 const FITUR_MAPPING = {
     "1": { fitur: "tambah_data", pesan: "✅ Fitur *Tambah Data* berhasil diatur.\n📌 Silakan kirim data sesuai format:\nPLU,BARCODE" },
@@ -153,17 +155,6 @@ async function sendMessageWithButtons(ptz, chatId, message, isAdminUser = false)
     }
 }
 
-// Fungsi untuk mengirim pesan
-async function sendMessage(ptz, chatId, message) {
-    if (!ptz || !chatId || !message) return;
-
-    try {
-        await ptz.sendMessage(chatId, { text: message });
-    } catch (error) {
-        console.error('❌ Gagal mengirim pesan:', error);
-    }
-}
-
 // Fungsi menangani input multi-line untuk Tambah Data
 async function handleTambahData(chatId, message, ptz) {
     const entries = message.split('\n').map(line => line.trim()).filter(line => line);
@@ -233,16 +224,108 @@ async function handlePJRFormatSelection(chatId, message, ptz) {
 
     if (message === '.1') {
         // Kirim langsung
+        const notFoundPLUs = [];
+        const foundPLUs = [];
+
         for (const plu of pluList) {
-            await pjr(parseInt(plu, 10), ptz, chatId);
+            const result = await pjr(parseInt(plu, 10), ptz, chatId);
+            if (result && result.success) {
+                foundPLUs.push(plu);
+            } else {
+                notFoundPLUs.push(plu);
+            }
         }
+
+        // Kirim laporan ke admin jika ada PLU yang tidak ditemukan
+        if (notFoundPLUs.length > 0) {
+            const adminReport = `📊 *Laporan PLU Tidak Ditemukan (PJR)*\n\n` +
+                `👤 User: ${chatId}\n` +
+                `❌ PLU Tidak Ditemukan: ${notFoundPLUs.join(', ')}\n` +
+                `✅ PLU Ditemukan: ${foundPLUs.length}\n` +
+                `❌ PLU Tidak Ditemukan: ${notFoundPLUs.length}\n` +
+                `📄 Total PLU: ${pluList.length}\n` +
+                `📈 Persentase Gagal: ${((notFoundPLUs.length / pluList.length) * 100).toFixed(1)}%`;
+
+            await sendAdminNotification(ptz, adminReport);
+        }
+
+        // Kirim pesan ke user
+        let userMessage = "✅ Barcode berhasil dikirim!";
+        if (notFoundPLUs.length > 0) {
+            userMessage += `\n\n⚠️ PLU yang tidak ditemukan:\n${notFoundPLUs.join(', ')}`;
+        }
+        return await sendMessage(ptz, chatId, userMessage);
+
     } else if (message === '.2') {
         // Kirim sebagai PDF
-        const selectedRack = {
-            nama: 'PJR_Result',
-            pluList: pluList
-        };
-        await prosesKirimPDF(chatId, selectedRack, ptz);
+        try {
+            await sendMessage(ptz, chatId, "⏳ Sedang memproses PDF...");
+            
+            // Dapatkan barcode untuk setiap PLU
+            const barcodeResults = await Promise.all(
+                pluList.map(async (plu) => {
+                    const result = await pjr(parseInt(plu, 10), ptz, chatId, true);
+                    if (!result || !result.success || !result.buffer) {
+                        console.error(`Gagal mendapatkan buffer untuk PLU ${plu}:`, result);
+                        return { plu, success: false };
+                    }
+                    return { plu, success: true, buffer: result.buffer };
+                })
+            );
+
+            // Filter out null values dan buat PDF
+            const validBuffers = barcodeResults.filter(result => result.success).map(result => result.buffer);
+            const notFoundPLUs = barcodeResults.filter(result => !result.success).map(result => result.plu);
+            const foundPLUs = barcodeResults.filter(result => result.success).map(result => result.plu);
+            
+            if (validBuffers.length === 0) {
+                return await sendMessage(ptz, chatId, "❌ Tidak ada barcode valid untuk dibuat PDF.");
+            }
+
+            // Buat direktori output jika belum ada
+            const outputDir = path.join(__dirname, 'output');
+            if (!fs.existsSync(outputDir)) {
+                fs.mkdirSync(outputDir);
+            }
+
+            // Generate PDF
+            const outputPath = path.join(outputDir, `PJR_${Date.now()}.pdf`);
+            await generateBarcodePDF(validBuffers, outputPath);
+
+            // Kirim PDF
+            await ptz.sendMessage(chatId, {
+                document: { url: outputPath },
+                mimetype: 'application/pdf',
+                fileName: `PJR_${Date.now()}.pdf`
+            });
+
+            // Hapus file PDF setelah terkirim
+            fs.unlinkSync(outputPath);
+
+            // Kirim laporan ke admin jika ada PLU yang tidak ditemukan
+            if (notFoundPLUs.length > 0) {
+                const adminReport = `📊 *Laporan PLU Tidak Ditemukan (PJR PDF)*\n\n` +
+                    `👤 User: ${chatId}\n` +
+                    `❌ PLU Tidak Ditemukan: ${notFoundPLUs.join(', ')}\n` +
+                    `✅ PLU Ditemukan: ${foundPLUs.length}\n` +
+                    `❌ PLU Tidak Ditemukan: ${notFoundPLUs.length}\n` +
+                    `📄 Total PLU: ${pluList.length}\n` +
+                    `📈 Persentase Gagal: ${((notFoundPLUs.length / pluList.length) * 100).toFixed(1)}%`;
+
+                await sendAdminNotification(ptz, adminReport);
+            }
+
+            // Kirim pesan ke user
+            let userMessage = "✅ PDF berhasil dibuat dan dikirim!";
+            if (notFoundPLUs.length > 0) {
+                userMessage += `\n\n⚠️ PLU yang tidak ditemukan:\n${notFoundPLUs.join(', ')}`;
+            }
+            return await sendMessage(ptz, chatId, userMessage);
+
+        } catch (error) {
+            console.error('Error saat membuat atau mengirim PDF:', error);
+            return await sendMessage(ptz, chatId, "❌ Terjadi kesalahan saat membuat PDF: " + error.message);
+        }
     } else {
         return await sendMessage(ptz, chatId, '⚠️ Pilihan tidak valid. Silakan pilih *.1* untuk kirim langsung atau *.2* untuk kirim PDF.');
     }
@@ -261,15 +344,57 @@ async function handleMonitoringFormatSelection(chatId, message, ptz) {
     if (message === '.1') {
         // Kirim langsung
         for (const plu of pluList) {
-            await processMonitoringPriceTag(plu, ptz, chatId);
+            await processMonitoringPriceTag(parseInt(plu, 10), ptz, chatId);
         }
     } else if (message === '.2') {
         // Kirim sebagai PDF
-        const selectedRack = {
-            nama: 'Monitoring_Result',
-            pluList: pluList
-        };
-        await prosesKirimPDF(chatId, selectedRack, ptz);
+        try {
+            await sendMessage(ptz, chatId, "⏳ Sedang memproses PDF...");
+            
+            // Dapatkan barcode untuk setiap PLU
+            const barcodeResults = await Promise.all(
+                pluList.map(async (plu) => {
+                    const result = await processMonitoringPriceTag(parseInt(plu, 10), ptz, chatId, true);
+                    if (!result || !result.success || !result.buffer) {
+                        console.error(`Gagal mendapatkan buffer untuk PLU ${plu}:`, result);
+                        return null;
+                    }
+                    return result.buffer;
+                })
+            );
+
+            // Filter out null values dan buat PDF
+            const validBuffers = barcodeResults.filter(buffer => buffer !== null);
+            
+            if (validBuffers.length === 0) {
+                return await sendMessage(ptz, chatId, "❌ Tidak ada barcode valid untuk dibuat PDF.");
+            }
+
+            // Buat direktori output jika belum ada
+            const outputDir = path.join(__dirname, 'output');
+            if (!fs.existsSync(outputDir)) {
+                fs.mkdirSync(outputDir);
+            }
+
+            // Generate PDF
+            const outputPath = path.join(outputDir, `Monitoring_${Date.now()}.pdf`);
+            await generateBarcodePDF(validBuffers, outputPath, 'Monitoring');
+
+            // Kirim PDF
+            await ptz.sendMessage(chatId, {
+                document: { url: outputPath },
+                mimetype: 'application/pdf',
+                fileName: `Monitoring_${Date.now()}.pdf`
+            });
+
+            // Hapus file PDF setelah terkirim
+            fs.unlinkSync(outputPath);
+
+            return await sendMessage(ptz, chatId, "✅ PDF berhasil dibuat dan dikirim!");
+        } catch (error) {
+            console.error('Error saat membuat atau mengirim PDF:', error);
+            return await sendMessage(ptz, chatId, "❌ Terjadi kesalahan saat membuat PDF: " + error.message);
+        }
     } else {
         return await sendMessage(ptz, chatId, '⚠️ Pilihan tidak valid. Silakan pilih *.1* untuk kirim langsung atau *.2* untuk kirim PDF.');
     }
@@ -302,50 +427,68 @@ async function handleTambahRak(chatId, message, ptz) {
 
 // Fungsi menangani Pilih Rak
 async function handlePilihRak(chatId, message, ptz) {
-    // Jika user sedang menunggu pilihan format
-    if (userState[chatId].waitingForOption && userState[chatId].selectedRack) {
-        if (message === '.1' || message === '.2') {
-            const option = message.replace('.', ''); // Hapus titik untuk mendapatkan angka saja
-            const result = await prosesFormatPengiriman(chatId, userState[chatId].selectedRack, option, ptz);
-            // Reset state setelah selesai
-            delete userState[chatId].waitingForOption;
-            delete userState[chatId].selectedRack;
-            return await sendMessage(ptz, chatId, result.message);
-        } else {
-            return await sendMessage(ptz, chatId, '⚠️ Pilihan tidak valid. Silakan pilih *.1* untuk kirim langsung atau *.2* untuk kirim PDF.');
+    try {
+        if (!message || !chatId || !ptz) {
+            console.error('Parameter tidak lengkap untuk handlePilihRak');
+            return;
         }
-    }
 
-    // Jika perintah list, tampilkan daftar rak
-    if (message.toLowerCase() === 'list') {
-        const result = await getRacks(chatId);
-        return await sendMessage(ptz, chatId, result.message);
-    }
+        // Check if this is a format selection response
+        if (userState[chatId]?.waitingForFormatOption) {
+            const option = message;
+            if (option === '1' || option === '2') {
+                const selectedRack = userState[chatId].selectedRack;
+                if (!selectedRack) {
+                    await sendMessage(ptz, chatId, '❌ Rak tidak ditemukan. Silakan pilih rak lagi.');
+                    return;
+                }
 
-    // Jika perintah hapus rak
-    if (message.toLowerCase().startsWith('hapus#')) {
-        const namaRak = message.split('#')[1];
-        if (!namaRak) {
-            return await sendMessage(ptz, chatId, '⚠️ Format salah. Gunakan format: *hapus#NAMA_RAK*');
+                // Process the format selection
+                const result = await prosesFormatPengiriman(chatId, selectedRack, option, ptz);
+                
+                // Clear the state after processing
+                delete userState[chatId].waitingForFormatOption;
+                delete userState[chatId].selectedRack;
+                
+                if (!result.success) {
+                    await sendMessage(ptz, chatId, result.message || '❌ Gagal memproses format pengiriman.');
+                }
+                return;
+            } else {
+                await sendMessage(ptz, chatId, '⚠️ Pilihan tidak valid. Silakan pilih 1 atau 2.');
+                return;
+            }
         }
-        const result = await hapusRak(chatId, namaRak);
-        if (result.success) {
-            // Tampilkan daftar rak setelah menghapus
-            const rackList = await getRacks(chatId);
-            return await sendMessage(ptz, chatId, result.message + '\n\n' + (rackList.success ? rackList.message : ''));
-        }
-        return await sendMessage(ptz, chatId, result.message);
-    }
 
-    // Jika memilih rak untuk melihat isi
-    const result = await pilihRak(chatId, message, ptz);
-    if (result.success && result.waitingForOption) {
-        // Simpan state untuk menunggu pilihan format
-        userState[chatId].waitingForOption = true;
-        userState[chatId].selectedRack = result.rack;
-    }
-    if (result.message) {
-        return await sendMessage(ptz, chatId, result.message);
+        const result = await pilihRak(chatId, message, ptz);
+        
+        if (!result) {
+            console.error('Hasil pilihRak tidak valid');
+            return;
+        }
+
+        if (!result.success) {
+            await sendMessage(ptz, chatId, result.message || '❌ Gagal memilih rak. Silakan coba lagi.');
+            return;
+        }
+
+        if (result.waitingForOption) {
+            // Simpan rak yang dipilih untuk digunakan saat user memilih format
+            userState[chatId] = {
+                ...userState[chatId],
+                selectedRack: result.rack,
+                waitingForFormatOption: true
+            };
+            return;
+        }
+
+        // Jika tidak waiting for option, kirim pesan hasil
+        if (result.message) {
+            await sendMessage(ptz, chatId, result.message);
+        }
+    } catch (error) {
+        console.error('Error di handlePilihRak:', error);
+        await sendMessage(ptz, chatId, '❌ Terjadi kesalahan saat memilih rak. Silakan coba lagi.');
     }
 }
 
@@ -372,7 +515,11 @@ async function handleScanBanyak(chatId, message, ptz) {
         const { Worker } = require('worker_threads');
         const worker = new Worker('./worker.js');
         
-        worker.postMessage({ data: barcodeData, type: 'bulk' });
+        // Pastikan data dikirim dalam format yang benar
+        worker.postMessage({
+            type: 'bulk',
+            data: barcodeData
+        });
         
         worker.on('message', async (result) => {
             if (result.success) {
@@ -493,6 +640,17 @@ async function processMessage(mek, ptz) {
 
         // Handle feature-specific actions
         if (userState[chatId].status === "siap" || userState[chatId].status === "menambah_plu") {
+            if (userState[chatId].waitingForFormatOption) {
+                const selectedRack = userState[chatId].selectedRack;
+                if (!selectedRack) {
+                    return await sendMessage(ptz, chatId, "⚠️ Tidak ada rak yang dipilih. Silakan pilih rak terlebih dahulu.");
+                }
+                const option = message.substring(1);
+                const result = await prosesFormatPengiriman(chatId, selectedRack, option, ptz);
+                delete userState[chatId].waitingForFormatOption;
+                delete userState[chatId].selectedRack;
+                return result;
+            }
             if (userState[chatId].waitingForPJROption) {
                 return await handlePJRFormatSelection(chatId, message, ptz);
             }

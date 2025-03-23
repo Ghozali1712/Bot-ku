@@ -8,8 +8,8 @@ const generateBarcode = async (barcodeData) => {
         const barcodeBuffer = await bwipjs.toBuffer({
             bcid: 'code128',          // Jenis barcode
             text: barcodeData,
-            scale: 8,                 // Skala optimal untuk kejelasan
-            height: 10,               // Tinggi lebih besar agar mudah dipindai
+            scale: 12,                // Meningkatkan skala dari 8 ke 12 untuk resolusi lebih tinggi
+            height: 15,               // Meningkatkan tinggi dari 10 ke 15 untuk visibilitas lebih baik
             includetext: true,        // Tampilkan teks di bawah barcode
             textxalign: 'center',     // Posisikan teks di tengah
             backgroundcolor: 'FFFFFF', // Latar belakang putih
@@ -45,13 +45,19 @@ const generateBarcodeNoText = async (barcodeData) => {
 };
 
 // Mendengarkan pesan dari main thread
-parentPort.on('message', async ({ data, type }) => {
+parentPort.on('message', async (message) => {
     try {
         let barcodeBuffer;
-        if (type === 'bulk') {
-            barcodeBuffer = await generateBarcodeNoText(data);
+        // Check if message is an object with data and type
+        if (typeof message === 'object' && message.data) {
+            if (message.type === 'bulk') {
+                barcodeBuffer = await generateBarcodeNoText(message.data);
+            } else {
+                barcodeBuffer = await generateBarcode(message.data);
+            }
         } else {
-            barcodeBuffer = await generateBarcode(data);
+            // Handle legacy format where message is just the barcode data
+            barcodeBuffer = await generateBarcode(message);
         }
         parentPort.postMessage({ success: true, buffer: barcodeBuffer });
     } catch (error) {

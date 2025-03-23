@@ -10,15 +10,18 @@ async function processMonitoringPriceTag(kodePLU, ptz, chatId) {
     try {
         console.log(`Memproses PLU ${kodePLU} untuk fitur Monitoring Price Tag`);
 
+        // Konversi PLU ke string
+        const pluString = kodePLU.toString();
+
         // Hasilkan gambar barcode dari PLU menggunakan bwip-js
         const barcodeBuffer = await bwipjs.toBuffer({
             bcid: 'code128',           // Jenis barcode
-            text: kodePLU,             // Data barcode (PLU)
-            scale: 15,                 // Meningkatkan skala untuk membuat barcode lebih lebar
-            height: 15,                // Menurunkan tinggi barcode
+            text: pluString,           // Data barcode (PLU)
+            scale: 20,                 // Meningkatkan skala dari 15 ke 20 untuk resolusi lebih tinggi
+            height: 20,                // Meningkatkan tinggi dari 15 ke 20 untuk visibilitas lebih baik
             includetext: true,         // Teks ditambahkan di bawah barcode
             textxalign: 'center',      // Teks di tengah
-            textsize: 18,              // Ukuran teks lebih besar
+            textsize: 20,              // Meningkatkan ukuran teks dari 18 ke 20
             textmargin: 10,            // Jarak teks dengan barcode
             paddingwidth: 20,          // Memperlebar sisi kanan dan kiri
             paddingheight: 10,         // Memperlebar sisi atas dan bawah
@@ -29,14 +32,16 @@ async function processMonitoringPriceTag(kodePLU, ptz, chatId) {
         // Kirim gambar barcode ke WhatsApp
         await ptz.sendMessage(chatId, {
             image: barcodeBuffer,
-            caption: `PLU: ${kodePLU}`,
+            caption: `PLU: ${pluString}`,
             mimetype: 'image/png', // Format PNG
         });
 
-        console.log(`Gambar barcode untuk PLU ${kodePLU} berhasil dikirim.`);
+        console.log(`Gambar barcode untuk PLU ${pluString} berhasil dikirim.`);
+        return { success: true, buffer: barcodeBuffer };
     } catch (error) {
         console.error('Kesalahan saat memproses PLU:', error.message);
         await ptz.sendMessage(chatId, { text: `Terjadi kesalahan dalam memproses PLU: ${kodePLU}.` });
+        return { success: false, message: error.message };
     }
 }
 
