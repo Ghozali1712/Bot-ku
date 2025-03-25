@@ -1,14 +1,27 @@
 const bwipjs = require('bwip-js');
+const { cariKodeDiExcelV2: pjr } = require('./barcodev2');
 
 /**
  * Fungsi untuk memproses kode PLU dan mengonversinya menjadi gambar
  * @param {string} kodePLU - Kode PLU yang akan diproses
  * @param {object} ptz - Objek WhatsApp (Baileys)
  * @param {string} chatId - ID chat pengguna
+ * @param {boolean} isPDF - Apakah ini untuk pembuatan PDF
  */
-async function processMonitoringPriceTag(kodePLU, ptz, chatId) {
+async function processMonitoringPriceTag(kodePLU, ptz, chatId, isPDF = false) {
     try {
-        console.log(`Memproses PLU ${kodePLU} untuk fitur Monitoring Price Tag`);
+        console.log(`Memulai pencarian untuk PLU: ${kodePLU}`);
+        
+        // Cari PLU di database
+        const result = await pjr(parseInt(kodePLU, 10), ptz, chatId);
+        
+        if (!result || !result.success) {
+            console.log(`PLU ${kodePLU} tidak ditemukan di database`);
+            return { 
+                success: false, 
+                message: `Tidak ditemukan barcode untuk PLU: ${kodePLU}` 
+            };
+        }
 
         // Konversi PLU ke string
         const pluString = kodePLU.toString();
@@ -29,18 +42,23 @@ async function processMonitoringPriceTag(kodePLU, ptz, chatId) {
             foregroundcolor: '000000', // Garis hitam
         });
 
-        // Kirim gambar barcode ke WhatsApp
-        await ptz.sendMessage(chatId, {
-            image: barcodeBuffer,
-            caption: `PLU: ${pluString}`,
-            mimetype: 'image/png', // Format PNG
-        });
+        // Jika ini untuk PDF, tidak perlu kirim gambar
+        if (!isPDF) {
+            // Kirim gambar barcode ke WhatsApp
+            await ptz.sendMessage(chatId, {
+                image: barcodeBuffer,
+                caption: `PLU: ${pluString}`,
+                mimetype: 'image/png', // Format PNG
+            });
+        }
 
-        console.log(`Gambar barcode untuk PLU ${pluString} berhasil dikirim.`);
+        console.log(`Gambar barcode untuk PLU ${pluString} berhasil dibuat.`);
         return { success: true, buffer: barcodeBuffer };
     } catch (error) {
         console.error('Kesalahan saat memproses PLU:', error.message);
-        await ptz.sendMessage(chatId, { text: `Terjadi kesalahan dalam memproses PLU: ${kodePLU}.` });
+        if (!isPDF) {
+            await ptz.sendMessage(chatId, { text: `Terjadi kesalahan dalam memproses PLU: ${kodePLU}.` });
+        }
         return { success: false, message: error.message };
     }
 }

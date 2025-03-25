@@ -2,7 +2,7 @@ const { tambahData } = require('./barcodev1');
 const { cariKodeDiExcelV2: pjr } = require('./barcodev2');
 const { processMonitoringPriceTag } = require('./pluProcessor');
 const { restartBot } = require('./restartBot');
-const { tambahRak, tambahPLUkeRak, getRacks, pilihRak, hapusRak, prosesFormatPengiriman, prosesKirimPDF, sendAdminNotification } = require('./rackManager');
+const { tambahRak, tambahPLUkeRak, getRacks, pilihRak, hapusRak, prosesFormatPengiriman, prosesKirimPDF, sendAdminNotification, racks } = require('./rackManager');
 const { generateBarcodePDF } = require('./pdfGenerator');
 const { sendMessage } = require('./messageUtils');
 const { proto } = require('@whiskeysockets/baileys');
@@ -249,62 +249,179 @@ async function handlePJRFormatSelection(chatId, message, ptz) {
             await sendAdminNotification(ptz, adminReport);
         }
 
-        // Kirim pesan ke user
-        let userMessage = "✅ Barcode berhasil dikirim!";
-        if (notFoundPLUs.length > 0) {
-            userMessage += `\n\n⚠️ PLU yang tidak ditemukan:\n${notFoundPLUs.join(', ')}`;
-        }
-        return await sendMessage(ptz, chatId, userMessage);
+        // Kirim ringkasan ke user
+        const userReport = `📊 *Ringkasan Hasil PJR*\n\n` +
+            `✅ PLU Ditemukan: ${foundPLUs.length}\n` +
+            `❌ PLU Tidak Ditemukan: ${notFoundPLUs.length}\n` +
+            `📄 Total PLU: ${pluList.length}\n` +
+            `📈 Persentase Berhasil: ${((foundPLUs.length / pluList.length) * 100).toFixed(1)}%`;
 
+        await sendMessage(ptz, chatId, userReport);
     } else if (message === '.2') {
-        // Kirim sebagai PDF
         try {
+            // Kirim pesan status awal
             await sendMessage(ptz, chatId, "⏳ Sedang memproses PDF...");
-            
-            // Dapatkan barcode untuk setiap PLU
-            const barcodeResults = await Promise.all(
-                pluList.map(async (plu) => {
-                    const result = await pjr(parseInt(plu, 10), ptz, chatId, true);
-                    if (!result || !result.success || !result.buffer) {
-                        console.error(`Gagal mendapatkan buffer untuk PLU ${plu}:`, result);
-                        return { plu, success: false };
-                    }
-                    return { plu, success: true, buffer: result.buffer };
-                })
-            );
 
-            // Filter out null values dan buat PDF
-            const validBuffers = barcodeResults.filter(result => result.success).map(result => result.buffer);
-            const notFoundPLUs = barcodeResults.filter(result => !result.success).map(result => result.plu);
-            const foundPLUs = barcodeResults.filter(result => result.success).map(result => result.plu);
-            
-            if (validBuffers.length === 0) {
-                return await sendMessage(ptz, chatId, "❌ Tidak ada barcode valid untuk dibuat PDF.");
+            // Kirim sebagai PDF
+            const buffers = [];
+            const notFoundPLUs = [];
+            const foundPLUs = [];
+
+            // Proses setiap PLU
+            for (const plu of pluList) {
+                try {
+                    console.log(`[PJR] Processing PLU: ${plu}`);
+                    const result = await pjr(parseInt(plu, 10), ptz, chatId, true);
+                    
+                    if (result && result.success && result.buffer) {
+                        console.log(`[PJR] PLU ${plu} found, buffer size: ${result.buffer.length} bytes`);
+                        foundPLUs.push(plu);
+                        
+                        // Pastikan buffer adalah Buffer
+                        let validBuffer;
+                        if (Buffer.isBuffer(result.buffer)) {
+                            validBuffer = result.buffer;
+                        } else if (typeof result.buffer === 'string') {
+                            validBuffer = Buffer.from(result.buffer, 'base64');
+                        } else {
+                            console.error(`[PJR] Invalid buffer type for PLU ${plu}`);
+                            notFoundPLUs.push(plu);
+                            continue;
+                        }
+
+                        // Validasi ukuran buffer
+                        if (validBuffer.length === 0) {
+                            console.error(`[PJR] Empty buffer for PLU ${plu}`);
+                            notFoundPLUs.push(plu);
+                            continue;
+                        }
+
+                        buffers.push(validBuffer);
+                        console.log(`[PJR] Added valid buffer for PLU ${plu}`);
+                    } else {
+                        console.log(`[PJR] PLU ${plu} not found or invalid result`);
+                        notFoundPLUs.push(plu);
+                    }
+                } catch (error) {
+                    console.error(`[PJR] Error processing PLU ${plu}:`, error);
+                    notFoundPLUs.push(plu);
+                }
             }
+
+            if (buffers.length === 0) {
+                console.log('[PJR] No valid buffers to create PDF');
+                await sendMessage(ptz, chatId, "❌ Tidak ada barcode valid untuk dibuat PDF.");
+                return;
+            }
+
+            console.log(`[PJR] Found ${buffers.length} valid buffers`);
+
+            // Update status
+            await sendMessage(ptz, chatId, "📦 Mengumpulkan barcode...");
 
             // Buat direktori output jika belum ada
             const outputDir = path.join(__dirname, 'output');
             if (!fs.existsSync(outputDir)) {
-                fs.mkdirSync(outputDir);
+                fs.mkdirSync(outputDir, { recursive: true });
             }
 
+            // Update status
+            await sendMessage(ptz, chatId, "📄 Membuat PDF...");
+
             // Generate PDF
-            const outputPath = path.join(outputDir, `PJR_${Date.now()}.pdf`);
-            await generateBarcodePDF(validBuffers, outputPath);
+            const pdfFileName = `PJR_${Date.now()}.pdf`;
+            const outputPath = path.join(outputDir, pdfFileName);
+            await generateBarcodePDF(buffers, outputPath);
 
-            // Kirim PDF
-            await ptz.sendMessage(chatId, {
-                document: { url: outputPath },
-                mimetype: 'application/pdf',
-                fileName: `PJR_${Date.now()}.pdf`
-            });
+            // Update status
+            await sendMessage(ptz, chatId, "📤 Mengirim PDF...");
 
-            // Hapus file PDF setelah terkirim
-            fs.unlinkSync(outputPath);
+            // Tunggu sebentar untuk memastikan file sudah dibuat
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            try {
+                // Kirim PDF
+                await ptz.sendMessage(chatId, {
+                    document: fs.readFileSync(outputPath),
+                    fileName: pdfFileName,
+                    mimetype: 'application/pdf'
+                });
+
+                // Hapus file PDF setelah terkirim
+                fs.unlinkSync(outputPath);
+
+                // Kirim ringkasan hasil
+                let summaryMessage = `📊 *Ringkasan Hasil PJR (PDF)*\n\n` +
+                    `✅ PLU Ditemukan: ${foundPLUs.length}\n` +
+                    `❌ PLU Tidak Ditemukan: ${notFoundPLUs.length}\n` +
+                    `📄 Total PLU: ${pluList.length}\n` +
+                    `📈 Persentase Berhasil: ${((foundPLUs.length / pluList.length) * 100).toFixed(1)}%`;
+
+                if (notFoundPLUs.length > 0) {
+                    summaryMessage += `\n\n⚠️ *PLU Tidak Ditemukan:*\n${notFoundPLUs.join(', ')}`;
+                }
+
+                await sendMessage(ptz, chatId, summaryMessage);
+
+                // Kirim laporan ke admin jika ada PLU yang tidak ditemukan
+                if (notFoundPLUs.length > 0) {
+                    const adminReport = `📊 *Laporan PLU Tidak Ditemukan (PJR PDF)*\n\n` +
+                        `👤 User: ${chatId}\n` +
+                        `❌ PLU Tidak Ditemukan: ${notFoundPLUs.join(', ')}\n` +
+                        `✅ PLU Ditemukan: ${foundPLUs.length}\n` +
+                        `❌ PLU Tidak Ditemukan: ${notFoundPLUs.length}\n` +
+                        `📄 Total PLU: ${pluList.length}\n` +
+                        `📈 Persentase Gagal: ${((notFoundPLUs.length / pluList.length) * 100).toFixed(1)}%`;
+
+                    await sendAdminNotification(ptz, adminReport);
+                }
+            } catch (error) {
+                console.error('[PJR] Error sending PDF:', error);
+                await sendMessage(ptz, chatId, "❌ Terjadi kesalahan saat mengirim PDF. Silakan coba lagi.");
+            }
+        } catch (error) {
+            console.error('[PJR] Error in PDF processing:', error);
+            await sendMessage(ptz, chatId, "❌ Terjadi kesalahan saat memproses PDF. Silakan coba lagi.");
+        }
+    } else {
+        await sendMessage(ptz, chatId, "⚠️ Pilihan tidak valid. Silakan pilih .1 atau .2");
+    }
+}
+
+// Fungsi untuk memproses pilihan format pengiriman Monitoring
+async function handleMonitoringFormatSelection(chatId, message, pluList, ptz) {
+    try {
+        if (message === '.1') {
+            // Kirim langsung
+            let foundPLUs = [];
+            let notFoundPLUs = [];
+            
+            for (const plu of pluList) {
+                const result = await pjr(parseInt(plu, 10), ptz, chatId, true);
+                if (result && result.success && result.buffer) {
+                    foundPLUs.push(plu);
+                    await ptz.sendMessage(chatId, { photo: result.buffer });
+                } else {
+                    notFoundPLUs.push(plu);
+                }
+            }
+
+            // Kirim ringkasan hasil
+            let summaryMessage = `📊 *Ringkasan Hasil Monitoring Price Tag*\n\n` +
+                `✅ PLU Ditemukan: ${foundPLUs.length}\n` +
+                `❌ PLU Tidak Ditemukan: ${notFoundPLUs.length}\n` +
+                `📄 Total PLU: ${pluList.length}\n` +
+                `📈 Persentase Berhasil: ${((foundPLUs.length / pluList.length) * 100).toFixed(1)}%`;
+
+            if (notFoundPLUs.length > 0) {
+                summaryMessage += `\n\n⚠️ *PLU Tidak Ditemukan:*\n${notFoundPLUs.join(', ')}`;
+            }
+
+            await sendMessage(ptz, chatId, summaryMessage);
 
             // Kirim laporan ke admin jika ada PLU yang tidak ditemukan
             if (notFoundPLUs.length > 0) {
-                const adminReport = `📊 *Laporan PLU Tidak Ditemukan (PJR PDF)*\n\n` +
+                let adminReport = `📊 *Laporan PLU Tidak Ditemukan (Monitoring Price Tag)*\n\n` +
                     `👤 User: ${chatId}\n` +
                     `❌ PLU Tidak Ditemukan: ${notFoundPLUs.join(', ')}\n` +
                     `✅ PLU Ditemukan: ${foundPLUs.length}\n` +
@@ -314,89 +431,106 @@ async function handlePJRFormatSelection(chatId, message, ptz) {
 
                 await sendAdminNotification(ptz, adminReport);
             }
+        } else if (message === '.2') {
+            try {
+                // Kirim pesan status awal
+                await sendMessage(ptz, chatId, "⏳ Sedang memproses PDF...");
 
-            // Kirim pesan ke user
-            let userMessage = "✅ PDF berhasil dibuat dan dikirim!";
-            if (notFoundPLUs.length > 0) {
-                userMessage += `\n\n⚠️ PLU yang tidak ditemukan:\n${notFoundPLUs.join(', ')}`;
-            }
-            return await sendMessage(ptz, chatId, userMessage);
+                // Kirim sebagai PDF
+                let foundPLUs = [];
+                let notFoundPLUs = [];
+                let validBuffers = [];
 
-        } catch (error) {
-            console.error('Error saat membuat atau mengirim PDF:', error);
-            return await sendMessage(ptz, chatId, "❌ Terjadi kesalahan saat membuat PDF: " + error.message);
-        }
-    } else {
-        return await sendMessage(ptz, chatId, '⚠️ Pilihan tidak valid. Silakan pilih *.1* untuk kirim langsung atau *.2* untuk kirim PDF.');
-    }
-}
-
-// Fungsi untuk memproses pilihan format pengiriman Monitoring
-async function handleMonitoringFormatSelection(chatId, message, ptz) {
-    if (!userState[chatId].pluList) {
-        return await sendMessage(ptz, chatId, "⚠️ Tidak ada daftar PLU yang akan diproses.");
-    }
-
-    const pluList = userState[chatId].pluList;
-    delete userState[chatId].waitingForMonitoringOption;
-    delete userState[chatId].pluList;
-
-    if (message === '.1') {
-        // Kirim langsung
-        for (const plu of pluList) {
-            await processMonitoringPriceTag(parseInt(plu, 10), ptz, chatId);
-        }
-    } else if (message === '.2') {
-        // Kirim sebagai PDF
-        try {
-            await sendMessage(ptz, chatId, "⏳ Sedang memproses PDF...");
-            
-            // Dapatkan barcode untuk setiap PLU
-            const barcodeResults = await Promise.all(
-                pluList.map(async (plu) => {
-                    const result = await processMonitoringPriceTag(parseInt(plu, 10), ptz, chatId, true);
-                    if (!result || !result.success || !result.buffer) {
-                        console.error(`Gagal mendapatkan buffer untuk PLU ${plu}:`, result);
-                        return null;
+                // Proses setiap PLU
+                for (const plu of pluList) {
+                    try {
+                        const result = await pjr(parseInt(plu, 10), ptz, chatId, true);
+                        if (result && result.success && result.buffer) {
+                            foundPLUs.push(plu);
+                            // Pastikan buffer adalah Buffer
+                            const buffer = Buffer.isBuffer(result.buffer) ? result.buffer : Buffer.from(result.buffer);
+                            validBuffers.push(buffer);
+                        } else {
+                            notFoundPLUs.push(plu);
+                        }
+                    } catch (error) {
+                        console.error(`Error processing PLU ${plu}:`, error);
+                        notFoundPLUs.push(plu);
                     }
-                    return result.buffer;
-                })
-            );
+                }
 
-            // Filter out null values dan buat PDF
-            const validBuffers = barcodeResults.filter(buffer => buffer !== null);
-            
-            if (validBuffers.length === 0) {
-                return await sendMessage(ptz, chatId, "❌ Tidak ada barcode valid untuk dibuat PDF.");
+                if (validBuffers.length === 0) {
+                    await sendMessage(ptz, chatId, "❌ Tidak ada barcode valid untuk dibuat PDF.");
+                    return;
+                }
+
+                // Update status
+                await sendMessage(ptz, chatId, "📦 Mengumpulkan barcode...");
+
+                // Buat direktori output jika belum ada
+                const outputDir = path.join(__dirname, 'output');
+                if (!fs.existsSync(outputDir)) {
+                    fs.mkdirSync(outputDir, { recursive: true });
+                }
+
+                // Update status
+                await sendMessage(ptz, chatId, "📄 Membuat PDF...");
+
+                // Generate PDF
+                const outputPath = path.join(outputDir, `Monitoring_${Date.now()}.pdf`);
+                await generateBarcodePDF(validBuffers, outputPath);
+
+                // Update status
+                await sendMessage(ptz, chatId, "📤 Mengirim PDF...");
+
+                // Tunggu sebentar untuk memastikan file sudah dibuat
+                await new Promise(resolve => setTimeout(resolve, 2000));
+
+                // Kirim PDF
+                await ptz.sendMessage(chatId, {
+                    document: fs.readFileSync(outputPath),
+                    fileName: `Monitoring_${Date.now()}.pdf`,
+                    mimetype: 'application/pdf'
+                });
+
+                // Hapus file PDF setelah terkirim
+                fs.unlinkSync(outputPath);
+
+                // Kirim ringkasan hasil
+                let summaryMessage = `📊 *Ringkasan Hasil Monitoring Price Tag (PDF)*\n\n` +
+                    `✅ PLU Ditemukan: ${foundPLUs.length}\n` +
+                    `❌ PLU Tidak Ditemukan: ${notFoundPLUs.length}\n` +
+                    `📄 Total PLU: ${pluList.length}\n` +
+                    `📈 Persentase Berhasil: ${((foundPLUs.length / pluList.length) * 100).toFixed(1)}%`;
+
+                if (notFoundPLUs.length > 0) {
+                    summaryMessage += `\n\n⚠️ *PLU Tidak Ditemukan:*\n${notFoundPLUs.join(', ')}`;
+                }
+
+                await sendMessage(ptz, chatId, summaryMessage);
+
+                // Kirim laporan ke admin jika ada PLU yang tidak ditemukan
+                if (notFoundPLUs.length > 0) {
+                    let adminReport = `📊 *Laporan PLU Tidak Ditemukan (Monitoring Price Tag PDF)*\n\n` +
+                        `👤 User: ${chatId}\n` +
+                        `❌ PLU Tidak Ditemukan: ${notFoundPLUs.join(', ')}\n` +
+                        `✅ PLU Ditemukan: ${foundPLUs.length}\n` +
+                        `❌ PLU Tidak Ditemukan: ${notFoundPLUs.length}\n` +
+                        `📄 Total PLU: ${pluList.length}\n` +
+                        `📈 Persentase Gagal: ${((notFoundPLUs.length / pluList.length) * 100).toFixed(1)}%`;
+
+                        await sendAdminNotification(ptz, adminReport);
+                }
+            } catch (error) {
+                console.error('Error in PDF processing:', error);
+                await sendMessage(ptz, chatId, "❌ Terjadi kesalahan saat memproses PDF. Silakan coba lagi.");
             }
-
-            // Buat direktori output jika belum ada
-            const outputDir = path.join(__dirname, 'output');
-            if (!fs.existsSync(outputDir)) {
-                fs.mkdirSync(outputDir);
-            }
-
-            // Generate PDF
-            const outputPath = path.join(outputDir, `Monitoring_${Date.now()}.pdf`);
-            await generateBarcodePDF(validBuffers, outputPath, 'Monitoring');
-
-            // Kirim PDF
-            await ptz.sendMessage(chatId, {
-                document: { url: outputPath },
-                mimetype: 'application/pdf',
-                fileName: `Monitoring_${Date.now()}.pdf`
-            });
-
-            // Hapus file PDF setelah terkirim
-            fs.unlinkSync(outputPath);
-
-            return await sendMessage(ptz, chatId, "✅ PDF berhasil dibuat dan dikirim!");
-        } catch (error) {
-            console.error('Error saat membuat atau mengirim PDF:', error);
-            return await sendMessage(ptz, chatId, "❌ Terjadi kesalahan saat membuat PDF: " + error.message);
+        } else {
+            await sendMessage(ptz, chatId, "⚠️ Pilihan tidak valid. Silakan pilih .1 atau .2");
         }
-    } else {
-        return await sendMessage(ptz, chatId, '⚠️ Pilihan tidak valid. Silakan pilih *.1* untuk kirim langsung atau *.2* untuk kirim PDF.');
+    } catch (error) {
+        console.error('Error in handleMonitoringFormatSelection:', error);
+        await sendMessage(ptz, chatId, "❌ Terjadi kesalahan saat memproses format pengiriman.");
     }
 }
 
@@ -428,67 +562,202 @@ async function handleTambahRak(chatId, message, ptz) {
 // Fungsi menangani Pilih Rak
 async function handlePilihRak(chatId, message, ptz) {
     try {
-        if (!message || !chatId || !ptz) {
-            console.error('Parameter tidak lengkap untuk handlePilihRak');
-            return;
+        // Dapatkan daftar rak untuk user ini
+        const userRacks = racks[chatId] || [];
+        
+        if (userRacks.length === 0) {
+            return await sendMessage(ptz, chatId, "❌ Anda belum memiliki rak. Silakan tambah rak terlebih dahulu.");
         }
 
-        // Check if this is a format selection response
-        if (userState[chatId]?.waitingForFormatOption) {
-            const option = message;
-            if (option === '1' || option === '2') {
-                const selectedRack = userState[chatId].selectedRack;
-                if (!selectedRack) {
-                    await sendMessage(ptz, chatId, '❌ Rak tidak ditemukan. Silakan pilih rak lagi.');
+        const selectedRack = userRacks.find(rack => rack.nama === message);
+        if (!selectedRack) {
+            return await sendMessage(ptz, chatId, "❌ Rak tidak ditemukan. Silakan pilih rak yang tersedia.");
+        }
+
+        // Tampilkan daftar PLU dan pilihan format pengiriman
+        const optionsMessage = `📋 *Daftar PLU yang akan diproses:*\n${selectedRack.pluList.join(', ')}\n\n` +
+                             `*Pilih format pengiriman:*\n` +
+                             `*.1* Kirim langsung\n` +
+                             `*.2* Kirim sebagai PDF\n\n` +
+                             `_Balas dengan .1 atau .2_`;
+
+        await sendMessage(ptz, chatId, optionsMessage);
+
+        // Simpan rak yang dipilih ke state user
+        userState[chatId] = {
+            ...userState[chatId],
+            selectedRack: selectedRack,
+            waitingForFormatSelection: true
+        };
+    } catch (error) {
+        console.error('Error di handlePilihRak:', error);
+        await sendMessage(ptz, chatId, "❌ Terjadi kesalahan saat memilih rak. Silakan coba lagi.");
+    }
+}
+
+// Fungsi untuk menangani callback query dari tombol format pengiriman
+async function handleFormatSelectionCallback(chatId, format, ptz) {
+    try {
+        // Dapatkan state user
+        const userState = userState[chatId];
+        if (!userState || !userState.selectedRack || !userState.waitingForFormatSelection) {
+            return await sendMessage(ptz, chatId, "❌ Silakan pilih rak terlebih dahulu.");
+        }
+
+        const selectedRack = userState.selectedRack;
+
+        // Hapus state format selection
+        delete userState.waitingForFormatSelection;
+        delete userState.selectedRack;
+
+        if (format === '.1') {
+            // Kirim langsung
+            let foundPLUs = [];
+            let notFoundPLUs = [];
+            
+            // Update status
+            await sendMessage(ptz, chatId, "⏳ Memproses barcode...");
+            
+            for (const plu of selectedRack.pluList) {
+                const result = await pjr(parseInt(plu, 10), ptz, chatId, true);
+                if (result && result.success && result.buffer) {
+                    foundPLUs.push(plu);
+                    await ptz.sendMessage(chatId, { photo: result.buffer });
+                } else {
+                    notFoundPLUs.push(plu);
+                }
+            }
+
+            // Kirim ringkasan hasil
+            let summaryMessage = `📊 *Ringkasan Hasil Rak ${selectedRack.nama}*\n\n` +
+                `✅ PLU Ditemukan: ${foundPLUs.length}\n` +
+                `❌ PLU Tidak Ditemukan: ${notFoundPLUs.length}\n` +
+                `📄 Total PLU: ${selectedRack.pluList.length}\n` +
+                `📈 Persentase Berhasil: ${((foundPLUs.length / selectedRack.pluList.length) * 100).toFixed(1)}%`;
+
+            if (notFoundPLUs.length > 0) {
+                summaryMessage += `\n\n⚠️ *PLU Tidak Ditemukan:*\n${notFoundPLUs.join(', ')}`;
+            }
+
+            await sendMessage(ptz, chatId, summaryMessage);
+
+            // Kirim laporan ke admin jika ada PLU yang tidak ditemukan
+            if (notFoundPLUs.length > 0) {
+                const adminReport = `📊 *Laporan PLU Tidak Ditemukan (Rak ${selectedRack.nama})*\n\n` +
+                    `👤 User: ${chatId}\n` +
+                    `❌ PLU Tidak Ditemukan: ${notFoundPLUs.join(', ')}\n` +
+                    `✅ PLU Ditemukan: ${foundPLUs.length}\n` +
+                    `❌ PLU Tidak Ditemukan: ${notFoundPLUs.length}\n` +
+                    `📄 Total PLU: ${selectedRack.pluList.length}\n` +
+                    `📈 Persentase Gagal: ${((notFoundPLUs.length / selectedRack.pluList.length) * 100).toFixed(1)}%`;
+
+                await sendAdminNotification(ptz, adminReport);
+            }
+        } else if (format === '.2') {
+            try {
+                // Kirim pesan status awal
+                await sendMessage(ptz, chatId, "⏳ Sedang memproses PDF...");
+
+                let foundPLUs = [];
+                let notFoundPLUs = [];
+                let validBuffers = [];
+
+                // Proses setiap PLU
+                for (const plu of selectedRack.pluList) {
+                    try {
+                        const result = await pjr(parseInt(plu, 10), ptz, chatId, true);
+                        if (result && result.success && result.buffer) {
+                            foundPLUs.push(plu);
+                            // Pastikan buffer adalah Buffer
+                            const buffer = Buffer.isBuffer(result.buffer) ? result.buffer : Buffer.from(result.buffer);
+                            validBuffers.push(buffer);
+                        } else {
+                            notFoundPLUs.push(plu);
+                        }
+                    } catch (error) {
+                        console.error(`Error processing PLU ${plu}:`, error);
+                        notFoundPLUs.push(plu);
+                    }
+                }
+
+                if (validBuffers.length === 0) {
+                    await sendMessage(ptz, chatId, "❌ Tidak ada barcode valid untuk dibuat PDF.");
                     return;
                 }
 
-                // Process the format selection
-                const result = await prosesFormatPengiriman(chatId, selectedRack, option, ptz);
-                
-                // Clear the state after processing
-                delete userState[chatId].waitingForFormatOption;
-                delete userState[chatId].selectedRack;
-                
-                if (!result.success) {
-                    await sendMessage(ptz, chatId, result.message || '❌ Gagal memproses format pengiriman.');
+                // Update status
+                await sendMessage(ptz, chatId, "📦 Mengumpulkan barcode...");
+
+                // Buat direktori output jika belum ada
+                const outputDir = path.join(__dirname, 'output');
+                if (!fs.existsSync(outputDir)) {
+                    fs.mkdirSync(outputDir, { recursive: true });
                 }
-                return;
-            } else {
-                await sendMessage(ptz, chatId, '⚠️ Pilihan tidak valid. Silakan pilih 1 atau 2.');
-                return;
+
+                // Update status
+                await sendMessage(ptz, chatId, "📄 Membuat PDF...");
+
+                // Generate PDF
+                const pdfFileName = `${selectedRack.nama}_${Date.now()}.pdf`;
+                const outputPath = path.join(outputDir, pdfFileName);
+                await generateBarcodePDF(validBuffers, outputPath);
+
+                // Update status
+                await sendMessage(ptz, chatId, "📤 Mengirim PDF...");
+
+                // Tunggu sebentar untuk memastikan file sudah dibuat
+                await new Promise(resolve => setTimeout(resolve, 2000));
+
+                try {
+                    // Kirim PDF
+                    await ptz.sendMessage(chatId, {
+                        document: fs.readFileSync(outputPath),
+                        fileName: pdfFileName,
+                        mimetype: 'application/pdf'
+                    });
+
+                    // Hapus file PDF setelah terkirim
+                    fs.unlinkSync(outputPath);
+
+                    // Kirim ringkasan hasil
+                    let summaryMessage = `📊 *Ringkasan Hasil Rak ${selectedRack.nama} (PDF)*\n\n` +
+                        `✅ PLU Ditemukan: ${foundPLUs.length}\n` +
+                        `❌ PLU Tidak Ditemukan: ${notFoundPLUs.length}\n` +
+                        `📄 Total PLU: ${selectedRack.pluList.length}\n` +
+                        `📈 Persentase Berhasil: ${((foundPLUs.length / selectedRack.pluList.length) * 100).toFixed(1)}%`;
+
+                    if (notFoundPLUs.length > 0) {
+                        summaryMessage += `\n\n⚠️ *PLU Tidak Ditemukan:*\n${notFoundPLUs.join(', ')}`;
+                    }
+
+                    await sendMessage(ptz, chatId, summaryMessage);
+
+                    // Kirim laporan ke admin jika ada PLU yang tidak ditemukan
+                    if (notFoundPLUs.length > 0) {
+                        const adminReport = `📊 *Laporan PLU Tidak Ditemukan (Rak ${selectedRack.nama} PDF)*\n\n` +
+                            `👤 User: ${chatId}\n` +
+                            `❌ PLU Tidak Ditemukan: ${notFoundPLUs.join(', ')}\n` +
+                            `✅ PLU Ditemukan: ${foundPLUs.length}\n` +
+                            `❌ PLU Tidak Ditemukan: ${notFoundPLUs.length}\n` +
+                            `📄 Total PLU: ${selectedRack.pluList.length}\n` +
+                            `📈 Persentase Gagal: ${((notFoundPLUs.length / selectedRack.pluList.length) * 100).toFixed(1)}%`;
+
+                            await sendAdminNotification(ptz, adminReport);
+                    }
+                } catch (error) {
+                    console.error('[Rak] Error sending PDF:', error);
+                    await sendMessage(ptz, chatId, "❌ Terjadi kesalahan saat mengirim PDF. Silakan coba lagi.");
+                }
+            } catch (error) {
+                console.error('Error in PDF processing:', error);
+                await sendMessage(ptz, chatId, "❌ Terjadi kesalahan saat memproses PDF. Silakan coba lagi.");
             }
-        }
-
-        const result = await pilihRak(chatId, message, ptz);
-        
-        if (!result) {
-            console.error('Hasil pilihRak tidak valid');
-            return;
-        }
-
-        if (!result.success) {
-            await sendMessage(ptz, chatId, result.message || '❌ Gagal memilih rak. Silakan coba lagi.');
-            return;
-        }
-
-        if (result.waitingForOption) {
-            // Simpan rak yang dipilih untuk digunakan saat user memilih format
-            userState[chatId] = {
-                ...userState[chatId],
-                selectedRack: result.rack,
-                waitingForFormatOption: true
-            };
-            return;
-        }
-
-        // Jika tidak waiting for option, kirim pesan hasil
-        if (result.message) {
-            await sendMessage(ptz, chatId, result.message);
+        } else {
+            await sendMessage(ptz, chatId, "⚠️ Pilihan tidak valid. Silakan pilih .1 atau .2");
         }
     } catch (error) {
-        console.error('Error di handlePilihRak:', error);
-        await sendMessage(ptz, chatId, '❌ Terjadi kesalahan saat memilih rak. Silakan coba lagi.');
+        console.error('Error di handleFormatSelectionCallback:', error);
+        await sendMessage(ptz, chatId, "❌ Terjadi kesalahan saat memproses format pengiriman.");
     }
 }
 
@@ -640,14 +909,14 @@ async function processMessage(mek, ptz) {
 
         // Handle feature-specific actions
         if (userState[chatId].status === "siap" || userState[chatId].status === "menambah_plu") {
-            if (userState[chatId].waitingForFormatOption) {
+            if (userState[chatId].waitingForFormatSelection) {
                 const selectedRack = userState[chatId].selectedRack;
                 if (!selectedRack) {
                     return await sendMessage(ptz, chatId, "⚠️ Tidak ada rak yang dipilih. Silakan pilih rak terlebih dahulu.");
                 }
                 const option = message.substring(1);
                 const result = await prosesFormatPengiriman(chatId, selectedRack, option, ptz);
-                delete userState[chatId].waitingForFormatOption;
+                delete userState[chatId].waitingForFormatSelection;
                 delete userState[chatId].selectedRack;
                 return result;
             }
@@ -655,7 +924,10 @@ async function processMessage(mek, ptz) {
                 return await handlePJRFormatSelection(chatId, message, ptz);
             }
             if (userState[chatId].waitingForMonitoringOption) {
-                return await handleMonitoringFormatSelection(chatId, message, ptz);
+                const pluList = userState[chatId].pluList;
+                delete userState[chatId].waitingForMonitoringOption;
+                delete userState[chatId].pluList;
+                return await handleMonitoringFormatSelection(chatId, message, pluList, ptz);
             }
             switch (userState[chatId].fitur) {
                 case "tambah_data":
